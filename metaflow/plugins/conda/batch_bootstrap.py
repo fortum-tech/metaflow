@@ -43,7 +43,7 @@ def install_conda_environment(env_id, packages):
             chmod +x conda; \
             export PATH=$PATH:{0}; fi'.format(os.getcwd()),
         'cd {0}'.format(os.path.join(os.getcwd(), 'pkgs')),
-        'conda create --yes --no-default-packages -p {0} --no-deps {1} >/dev/null 2>&1'.format(os.path.join(os.getcwd(), env_id), ' '.join(packages)),
+        'conda create --yes --no-default-packages -p {0} --no-deps {1}'.format(os.path.join(os.getcwd(), env_id), ' '.join(packages)),
         'cd {0}'.format(os.getcwd())
     ]
     os.system(' && '.join(args))
