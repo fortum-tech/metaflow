@@ -12,6 +12,8 @@ import fcntl
 import time
 import select
 import subprocess
+
+from io import BytesIO
 from functools import partial
 
 from . import get_namespace
@@ -23,16 +25,9 @@ from . import procpoll
 from .datastore import DataException, MetaflowDatastoreSet
 from .metadata import MetaDatum
 from .debug import debug
+from .decorators import flow_decorators
 
 from .util import to_unicode, compress_list
-try:
-    # python2
-    import cStringIO
-    BytesIO = cStringIO.StringIO
-except:
-    # python3
-    import io
-    BytesIO = io.BytesIO
 
 MAX_WORKERS=16
 MAX_NUM_SPLITS=100
@@ -720,6 +715,13 @@ class CLIArgs(object):
             'with': [deco.make_decorator_spec() for deco in self.task.decos
                      if not deco.statically_defined]
         }
+
+        # FlowDecorators can define their own top-level options. They are
+        # responsible for adding their own top-level options and values through
+        # the get_top_level_options() hook.
+        for deco in flow_decorators():
+            self.top_level_options.update(deco.get_top_level_options())
+
         self.commands = ['step']
         self.command_args = [self.task.step]
         self.command_options = {

@@ -4,7 +4,7 @@ import os
 import time
 
 from metaflow.metaflow_config import DATASTORE_LOCAL_DIR
-from .metadata import MetadataProvider
+from metaflow.metadata import MetadataProvider
 
 
 class LocalMetadataProvider(MetadataProvider):
@@ -33,6 +33,9 @@ class LocalMetadataProvider(MetadataProvider):
         if v is None:
             return '<No %s directory found in current working tree>' % DATASTORE_LOCAL_DIR
         return os.path.dirname(v)
+
+    def version(self):
+        return 'local'
 
     def new_run_id(self, tags=[], sys_tags=[]):
         # We currently just use the timestamp to create an ID. We can be reasonably certain

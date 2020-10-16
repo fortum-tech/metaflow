@@ -22,10 +22,20 @@ class MergeArtifactsTest(MetaflowTest):
     @steps(0, ['join'], required=True)
     def merge_things(self, inputs):
         from metaflow.current import current
-        from metaflow.exception import MergeArtifactsException
+        from metaflow.exception import UnhandledInMergeArtifactsException, MetaflowException
 
         # Test to make sure non-merged values are reported
-        assert_exception(lambda: self.merge_artifacts(inputs), MergeArtifactsException)
+        assert_exception(lambda: self.merge_artifacts(inputs), UnhandledInMergeArtifactsException)
+
+        # Test to make sure nothing is set if failed merge_artifacts
+        assert(not hasattr(self, 'non_modified_passdown'))
+        assert(not hasattr(self, 'manual_merge_required'))
+
+        # Test to make sure that only one of exclude/include is used
+        assert_exception(lambda: self.merge_artifacts(
+            inputs,
+            exclude=['ignore_me'],
+            include=['non_modified_passdown']), MetaflowException)
 
         # Test to make sure nothing is set if failed merge_artifacts
         assert(not hasattr(self, 'non_modified_passdown'))

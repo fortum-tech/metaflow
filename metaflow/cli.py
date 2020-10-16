@@ -21,14 +21,14 @@ from .graph import FlowGraph
 from .datastore import DATASTORES
 from .runtime import NativeRuntime
 from .package import MetaflowPackage
-from .plugins import LOGGING_SIDECAR, MONITOR_SIDECAR
-from .metadata import METADATAPROVIDERS
-from .metaflow_config import DEFAULT_DATASTORE, DEFAULT_METADATA
-from .plugins import ENVIRONMENTS
+from .plugins import ENVIRONMENTS, LOGGING_SIDECARS, METADATA_PROVIDERS, MONITOR_SIDECARS
+from .metaflow_config import DEFAULT_DATASTORE, DEFAULT_ENVIRONMENT, DEFAULT_EVENT_LOGGER, \
+    DEFAULT_METADATA, DEFAULT_MONITOR, DEFAULT_PACKAGE_SUFFIXES
 from .environment import MetaflowEnvironment
 from .pylint_wrapper import PyLint
 from .event_logger import EventLogger
 from .monitor import Monitor
+from .R import use_r, metaflow_r_version
 
 ERASE_TO_EOL = '\033[K'
 HIGHLIGHT = 'red'
@@ -375,6 +375,12 @@ def logs(obj, input_path, stdout=None, stderr=None, both=None):
               default=None,
               help="Run id of the origin flow, if this task is part of a flow "
               "being resumed.")
+@click.option('--with',
+              'decospecs',
+              multiple=True,
+              help="Add a decorator to this task. You can specify this "
+              "option multiple times to attach multiple decorators "
+              "to this task.")
 @click.pass_obj
 def step(obj,
          step_name,
@@ -387,7 +393,8 @@ def step(obj,
          retry_count=None,
          max_user_code_retries=None,
          clone_only=None,
-         clone_run_id=None):
+         clone_run_id=None,
+         decospecs=None):
     if user_namespace is not None:
         namespace(user_namespace or None)
 
@@ -402,9 +409,13 @@ def step(obj,
          fg='magenta',
          bold=False)
 
+    if decospecs:
+        decorators._attach_decorators_to_step(func, decospecs)
+
     obj.datastore.datastore_root = obj.datastore_root
     if obj.datastore.datastore_root is None:
-        obj.datastore.datastore_root = obj.datastore.get_datastore_root_from_config(obj.echo)
+        obj.datastore.datastore_root = \
+            obj.datastore.get_datastore_root_from_config(obj.echo)
 
     obj.metadata.add_sticky_tags(tags=tags)
     paths = decompress_list(input_paths) if input_paths else []
@@ -433,7 +444,7 @@ def step(obj,
 
     echo('Success', fg='green', bold=True, indent=True)
 
-@parameters.add_custom_parameters
+@parameters.add_custom_parameters(deploy_mode=False)
 @cli.command(help="Internal command to initialize a run.")
 @click.option('--run-id',
               default=None,
@@ -454,7 +465,8 @@ def init(obj, run_id=None, task_id=None, **kwargs):
     # variables.
 
     if obj.datastore.datastore_root is None:
-        obj.datastore.datastore_root = obj.datastore.get_datastore_root_from_config(obj.echo)
+        obj.datastore.datastore_root = \
+            obj.datastore.get_datastore_root_from_config(obj.echo)
 
     runtime = NativeRuntime(obj.flow,
                             obj.graph,
@@ -540,6 +552,14 @@ def resume(obj,
     if step_to_rerun is None:
         clone_steps = set()
     else:
+        # validate step name
+        if step_to_rerun not in obj.graph.nodes:
+            raise CommandException(
+                "invalid step name {0} specified, must be step present in "
+                "current form of execution graph. Valid step names include: {1}"
+                .format(
+                    step_to_rerun,
+                    ",".join(list(obj.graph.nodes.keys()))))
         clone_steps = {step_to_rerun}
 
     runtime = NativeRuntime(obj.flow,
@@ -563,7 +583,7 @@ def resume(obj,
     write_run_id(run_id_file, runtime.run_id)
 
 
-@parameters.add_custom_parameters
+@parameters.add_custom_parameters(deploy_mode=True)
 @cli.command(help='Run the workflow locally.')
 @common_run_options
 @click.option('--namespace',
@@ -626,7 +646,7 @@ def before_run(obj, tags, decospecs):
     #
     # A downside is that we need to have the following decorators handling
     # in two places in this module and we need to make sure that
-    # _init_decorators doesn't get called twice.
+    # _init_step_decorators doesn't get called twice.
     if decospecs:
         decorators._attach_decorators(obj.flow, decospecs)
         obj.graph = FlowGraph(obj.flow.__class__)
@@ -634,16 +654,16 @@ def before_run(obj, tags, decospecs):
     #obj.environment.init_environment(obj.logger)
 
     if obj.datastore.datastore_root is None:
-        obj.datastore.datastore_root = obj.datastore.get_datastore_root_from_config(obj.echo)
+        obj.datastore.datastore_root = \
+            obj.datastore.get_datastore_root_from_config(obj.echo)
 
-    decorators._init_decorators(
+    decorators._init_step_decorators(
         obj.flow, obj.graph, obj.environment, obj.datastore, obj.logger)
     obj.metadata.add_sticky_tags(tags=tags)
 
     # Package working directory only once per run.
     # We explicitly avoid doing this in `start` since it is invoked for every
     # step in the run.
-    # TODO(crk): Capture time taken to package and log to keystone.
     obj.package = MetaflowPackage(obj.flow, obj.environment, obj.logger, obj.package_suffixes)
 
 
@@ -652,7 +672,7 @@ def before_run(obj, tags, decospecs):
 def version(obj):
     echo_always(obj.version)
 
-
+@decorators.add_decorator_options
 @click.command(cls=click.CommandCollection,
                sources=[cli] + plugins.get_plugin_cli(),
                invoke_without_command=True)
@@ -663,10 +683,10 @@ def version(obj):
 @click.option('--metadata',
               default=DEFAULT_METADATA,
               show_default=True,
-              type=click.Choice([m.TYPE for m in METADATAPROVIDERS]),
+              type=click.Choice([m.TYPE for m in METADATA_PROVIDERS]),
               help='Metadata service type')
 @click.option('--environment',
-              default='local',
+              default=DEFAULT_ENVIRONMENT,
               show_default=True,
               type=click.Choice(['local'] + [m.TYPE for m in ENVIRONMENTS]),
               help='Execution environment type')
@@ -680,7 +700,7 @@ def version(obj):
 @click.option('--package-suffixes',
               help='A comma-separated list of file suffixes to include '
                    'in the code package.',
-              default='.py',
+              default=DEFAULT_PACKAGE_SUFFIXES,
               show_default=True)
 @click.option('--with',
               'decospecs',
@@ -697,14 +717,14 @@ def version(obj):
               show_default=True,
               help='Measure code coverage using coverage.py.')
 @click.option('--event-logger',
-              default='nullSidecarLogger',
+              default=DEFAULT_EVENT_LOGGER,
               show_default=True,
-              type=click.Choice(LOGGING_SIDECAR),
+              type=click.Choice(LOGGING_SIDECARS),
               help='type of event logger used')
 @click.option('--monitor',
-              default='nullSidecarMonitor',
+              default=DEFAULT_MONITOR,
               show_default=True,
-              type=click.Choice(MONITOR_SIDECAR),
+              type=click.Choice(MONITOR_SIDECARS),
               help='Monitoring backend type')
 @click.pass_context
 def start(ctx,
@@ -718,7 +738,8 @@ def start(ctx,
           pylint=None,
           coverage=None,
           event_logger=None,
-          monitor=None):
+          monitor=None,
+          **deco_options):
     global echo
     if quiet:
         echo = echo_dev_null
@@ -726,13 +747,13 @@ def start(ctx,
         echo = echo_always
 
     ctx.obj.version = metaflow_version.get_version()
+    version = ctx.obj.version
+    if use_r():
+        version = metaflow_r_version()
 
-    echo('Metaflow %s' % ctx.obj.version, fg='magenta', bold=True, nl=False)
+    echo('Metaflow %s' % version, fg='magenta', bold=True, nl=False)
     echo(" executing *%s*" % ctx.obj.flow.name, fg='magenta', nl=False)
     echo(" for *%s*" % resolve_identity(), fg='magenta')
-
-    if decospecs:
-        decorators._attach_decorators(ctx.obj.flow, decospecs)
 
     if coverage:
         from coverage import Coverage
@@ -758,24 +779,49 @@ def start(ctx,
                            if e.TYPE == environment][0](ctx.obj.flow)
     ctx.obj.environment.validate_environment(echo)
 
+    ctx.obj.datastore = DATASTORES[datastore]
+    ctx.obj.datastore_root = datastore_root
+
+    # It is important to initialize flow decorators early as some of the
+    # things they provide may be used by some of the objects initialize after.
+    decorators._init_flow_decorators(ctx.obj.flow,
+                                     ctx.obj.graph,
+                                     ctx.obj.environment,
+                                     ctx.obj.datastore,
+                                     ctx.obj.logger,
+                                     echo,
+                                     deco_options)
+
     ctx.obj.monitor = Monitor(monitor, ctx.obj.environment, ctx.obj.flow.name)
     ctx.obj.monitor.start()
 
-    ctx.obj.metadata = [m for m in METADATAPROVIDERS
+    ctx.obj.metadata = [m for m in METADATA_PROVIDERS
                         if m.TYPE == metadata][0](ctx.obj.environment,
                                                   ctx.obj.flow,
                                                   ctx.obj.event_logger,
                                                   ctx.obj.monitor)
     ctx.obj.datastore = DATASTORES[datastore]
-    ctx.obj.datastore_root = datastore_root
 
+    if datastore_root is None:
+        datastore_root = \
+          ctx.obj.datastore.get_datastore_root_from_config(ctx.obj.echo)
+    ctx.obj.datastore_root = ctx.obj.datastore.datastore_root = datastore_root
+
+    if decospecs:
+        decorators._attach_decorators(ctx.obj.flow, decospecs)
+
+    # initialize current and parameter context for deploy-time parameters
     current._set_env(flow_name=ctx.obj.flow.name, is_running=False)
+    parameters.set_parameter_context(ctx.obj.flow.name,
+                                        ctx.obj.logger,
+                                        ctx.obj.datastore)
+
     if ctx.invoked_subcommand not in ('run', 'resume'):
         # run/resume are special cases because they can add more decorators with --with,
         # so they have to take care of themselves.
         decorators._attach_decorators(
             ctx.obj.flow, ctx.obj.environment.decospecs())
-        decorators._init_decorators(
+        decorators._init_step_decorators(
             ctx.obj.flow, ctx.obj.graph, ctx.obj.environment, ctx.obj.datastore, ctx.obj.logger)
         #TODO (savin): Enable lazy instantiation of package
         ctx.obj.package = None
@@ -808,11 +854,26 @@ def _check(graph, flow, environment, pylint=True, warnings=False, **kwargs):
         fname = inspect.getfile(flow.__class__)
         pylint = PyLint(fname)
         if pylint.has_pylint():
-            pylint.run(warnings=warnings, pylint_config=environment.pylint_config(), logger=echo_always)
-            echo('Pylint is happy!',
-                 fg='green',
-                 bold=True,
-                 indent=True)
+            pylint_is_happy, pylint_exception_msg = pylint.run(
+                        warnings=warnings,
+                        pylint_config=environment.pylint_config(),
+                        logger=echo_always)
+
+            if pylint_is_happy:
+                echo('Pylint is happy!',
+                     fg='green',
+                     bold=True,
+                     indent=True)
+            else:
+                echo("Pylint couldn't analyze your code.\n\tPylint exception: %s"
+                     % pylint_exception_msg,
+                     fg='red',
+                     bold=True,
+                     indent=True)
+                echo("Skipping Pylint checks.",
+                     fg='red',
+                     bold=True,
+                     indent=True)
         else:
             echo("Pylint not found, so extra checks are disabled.",
                  fg='green',
@@ -849,8 +910,6 @@ def main(flow, args=None, handle_exceptions=True, entrypoint=None):
 
     state = CliState(flow)
     state.entrypoint = entrypoint
-
-    parameters.set_parameter_context(flow.name)
 
     try:
         if args is None:
