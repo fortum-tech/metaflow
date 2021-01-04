@@ -1,20 +1,25 @@
 import atexit
 import json
+import os
 import select
 import shlex
 import time
 
+from az_app_login.util import load_cache, save_cache
 from metaflow import util
 from metaflow.exception import MetaflowException
 from metaflow.metaflow_config import (
-    BATCH_METADATA_SERVICE_HEADERS,
     BATCH_METADATA_SERVICE_URL,
     DATASTORE_SYSROOT_S3,
     DATATOOLS_S3ROOT,
     DEFAULT_METADATA,
 )
+from metaflow.plugins.metadata import AZAuth
+from msal import TokenCache
 
 from .batch_client import BatchClient
+
+EXTRA_ENVS_VARIABLE_NAME = "METAFLOW_AWS_BATCH_EXTRA_ENV"
 
 
 class BatchException(MetaflowException):
@@ -148,9 +153,12 @@ class Batch(object):
         ).environment_variable(
             "METAFLOW_USER", attrs["metaflow.user"]
         ).environment_variable(
-            "METAFLOW_SERVICE_URL", BATCH_METADATA_SERVICE_URL
-        ).environment_variable(
-            "METAFLOW_SERVICE_HEADERS", json.dumps(BATCH_METADATA_SERVICE_HEADERS)
+            "METAFLOW_SERVICE_URL",
+            BATCH_METADATA_SERVICE_URL
+            # Note: don't try to pass on the headers as they might contain
+            # local access tokens
+            # ).environment_variable(
+            #     "METAFLOW_SERVICE_HEADERS", json.dumps(BATCH_METADATA_SERVICE_HEADERS)
         ).environment_variable(
             "METAFLOW_DATASTORE_SYSROOT_S3", DATASTORE_SYSROOT_S3
         ).environment_variable(
@@ -160,6 +168,21 @@ class Batch(object):
         ).environment_variable(
             "METAFLOW_DEFAULT_METADATA", DEFAULT_METADATA
         )
+        extra_envs = json.loads(os.environ.get(EXTRA_ENVS_VARIABLE_NAME, "[]"))
+        # Only create the cache if there's at least one extra env variable
+        # specifying "tokenProfile"
+        token_cache = (
+            load_cache()
+            if next((True for env in extra_envs if "tokenProfile" in env), False)
+            else None
+        )
+        for env in extra_envs:
+            job.environment_variable(
+                env["name"],
+                env.get("value") or get_access_token(env["tokenProfile"], token_cache),
+            )
+        if token_cache:
+            save_cache(token_cache)
         # Skip setting METAFLOW_DATASTORE_SYSROOT_LOCAL because metadata sync between
         # the local user instance and the remote AWS Batch instance assumes metadata is
         # stored in DATASTORE_LOCAL_DIR on the remote AWS Batch instance; this happens
@@ -170,6 +193,7 @@ class Batch(object):
         if attrs:
             for key, value in attrs.items():
                 job.parameter(key, value)
+
         return job
 
     def launch_job(
@@ -260,3 +284,8 @@ class Batch(object):
                 raise BatchException("Task failed!")
             echo(self.job.id, "Task finished with exit code %s." % self.job.status_code)
 
+
+def get_access_token(profile: str, cache: TokenCache):
+    """Fetch an access token in a single call."""
+    auth = AZAuth(profile, cache=cache)
+    return auth.get_access_token()
