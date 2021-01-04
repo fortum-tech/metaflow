@@ -6,6 +6,9 @@ from metaflow.exception import MetaflowException
 from metaflow.metaflow_config import METADATA_SERVICE_NUM_RETRIES, METADATA_SERVICE_HEADERS, \
     METADATA_SERVICE_URL
 from metaflow.metadata import MetadataProvider
+from .az_auth import AZAuth
+
+auth = AZAuth()
 
 
 class ServiceException(MetaflowException):
@@ -15,6 +18,18 @@ class ServiceException(MetaflowException):
         self.http_code = None if http_code is None else int(http_code)
         self.response = body
         super(ServiceException, self).__init__(msg)
+
+
+def default_request_args():
+    return {"headers": METADATA_SERVICE_HEADERS, "auth": auth}
+
+
+def http_get(uri, **kwargs):
+    return requests.get(uri, **{**default_request_args(), **kwargs})
+
+
+def http_post(uri, **kwargs):
+    return requests.post(uri, **{**default_request_args(), **kwargs})
 
 
 class ServiceMetadataProvider(MetadataProvider):
@@ -27,7 +42,7 @@ class ServiceMetadataProvider(MetadataProvider):
     def compute_info(cls, val):
         v = val.rstrip('/')
         try:
-            resp = requests.get(os.path.join(v, 'ping'), headers=METADATA_SERVICE_HEADERS)
+            resp = http_get(os.path.join(v, 'ping'))
             resp.raise_for_status()
         except:  # noqa E722
             raise ValueError('Metaflow service [%s] unreachable.' % v)
@@ -36,6 +51,11 @@ class ServiceMetadataProvider(MetadataProvider):
     @classmethod
     def default_info(cls):
         return METADATA_SERVICE_URL
+
+    @classmethod
+    def default_request_args(cls):
+        return METADATA_SERVICE_URL
+
 
     def version(self):
         return self._version(self._monitor)
@@ -206,15 +226,15 @@ class ServiceMetadataProvider(MetadataProvider):
                 if data is None:
                     if monitor:
                         with monitor.measure('metaflow.service_metadata.get'):
-                            resp = requests.get(url, headers=METADATA_SERVICE_HEADERS)
+                            resp = http_get(url)
                     else:
-                        resp = requests.get(url, headers=METADATA_SERVICE_HEADERS)
+                        resp = http_get(url)
                 else:
                     if monitor:
                         with monitor.measure('metaflow.service_metadata.post'):
-                            resp = requests.post(url, headers=METADATA_SERVICE_HEADERS, json=data)
+                            resp = http_post(url, json=data)
                     else:
-                        resp = requests.post(url, headers=METADATA_SERVICE_HEADERS, json=data)
+                        resp = http_post(url, json=data)
             except:  # noqa E722
                 if monitor:
                     with monitor.count('metaflow.service_metadata.failed_request'):
@@ -265,10 +285,9 @@ class ServiceMetadataProvider(MetadataProvider):
             try:
                 if monitor:
                     with monitor.measure('metaflow.service_metadata.get'):
-                        resp = requests.get(url,
-                            headers=METADATA_SERVICE_HEADERS)
+                        resp = http_get(url)
                 else:
-                    resp = requests.get(url, headers=METADATA_SERVICE_HEADERS)
+                    resp = http_get(url)
             except:
                 if monitor:
                     with monitor.count(

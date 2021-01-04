@@ -19,7 +19,8 @@ setup(name='metaflow',
         'click>=7.0',
         'requests',
         'boto3',
-        'pylint<2.5.0'
+        'pylint<2.5.0',
+        'az-app-login>=0.3.0'
       ],
       tests_require = [
         'coverage'
