@@ -25,10 +25,12 @@ def default_request_args():
 
 
 def http_get(uri, **kwargs):
+    """ Adds default arguments requests.get """
     return requests.get(uri, **{**default_request_args(), **kwargs})
 
 
 def http_post(uri, **kwargs):
+    """ Adds default arguments requests.post """
     return requests.post(uri, **{**default_request_args(), **kwargs})
 
 
