@@ -5,7 +5,6 @@ import select
 import shlex
 import time
 
-from az_app_login.util import load_cache, save_cache
 from metaflow import util
 from metaflow.exception import MetaflowException
 from metaflow.metaflow_config import (
@@ -14,8 +13,6 @@ from metaflow.metaflow_config import (
     DATATOOLS_S3ROOT,
     DEFAULT_METADATA,
 )
-from metaflow.plugins.metadata import AZAuth
-from msal import TokenCache
 
 from .batch_client import BatchClient
 
@@ -125,6 +122,15 @@ class Batch(object):
         env={},
         attrs={},
     ):
+        from az_app_login.util import load_cache, save_cache
+        from metaflow.plugins.metadata import AZAuth
+        from msal import TokenCache
+
+        def get_access_token(profile: str, cache: TokenCache):
+            """Fetch an access token in a single call."""
+            auth = AZAuth(profile, cache=cache)
+            return auth.get_access_token()
+
         job_name = self._job_name(
             attrs.get("metaflow.user"),
             attrs.get("metaflow.flow_name"),
@@ -173,13 +179,13 @@ class Batch(object):
         # specifying "tokenProfile"
         token_cache = (
             load_cache()
-            if next((True for env in extra_envs if "tokenProfile" in env), False)
+            if any(filter(lambda e: "tokenProfile" in e, extra_envs))
             else None
         )
-        for env in extra_envs:
+        for e in extra_envs:
             job.environment_variable(
-                env["name"],
-                env.get("value") or get_access_token(env["tokenProfile"], token_cache),
+                e["name"],
+                e.get("value") or get_access_token(e["tokenProfile"], token_cache),
             )
         if token_cache:
             save_cache(token_cache)
@@ -193,7 +199,6 @@ class Batch(object):
         if attrs:
             for key, value in attrs.items():
                 job.parameter(key, value)
-
         return job
 
     def launch_job(
@@ -284,8 +289,3 @@ class Batch(object):
                 raise BatchException("Task failed!")
             echo(self.job.id, "Task finished with exit code %s." % self.job.status_code)
 
-
-def get_access_token(profile: str, cache: TokenCache):
-    """Fetch an access token in a single call."""
-    auth = AZAuth(profile, cache=cache)
-    return auth.get_access_token()

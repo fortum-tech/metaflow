@@ -1,8 +1,6 @@
 import atexit
 import os
 
-from az_app_login.util import build_fetcher, get_access_token, load_cache, save_cache
-
 AUTH_PROFILE_ENV_VAR = "METAFLOW_AUTH_PROFILE"
 OBO_TOKEN_ENV_VAR = "METAFLOW_OBO_TOKEN"
 
@@ -24,6 +22,8 @@ class AZAuth:
     @property
     def cache(self):
         if not self._cache:
+            from az_app_login.util import load_cache, save_cache
+
             self._cache = load_cache()
             atexit.register(save_cache, self._cache)
         return self._cache
@@ -31,6 +31,8 @@ class AZAuth:
     @property
     def fetcher(self):
         if self.profile and not self._fetcher:
+            from az_app_login.util import build_fetcher
+
             self._fetcher = build_fetcher(
                 cache=self.cache, profile=self.profile, obo_token=self.obo_token
             )
@@ -46,5 +48,6 @@ class AZAuth:
     def get_access_token(self):
         if not self.fetcher:
             return None
-        return get_access_token(self.fetcher)
+        from az_app_login.util import get_access_token
 
+        return get_access_token(self.fetcher)["access_token"]
