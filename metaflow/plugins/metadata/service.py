@@ -52,10 +52,6 @@ class ServiceMetadataProvider(MetadataProvider):
     def default_info(cls):
         return METADATA_SERVICE_URL
 
-    @classmethod
-    def default_request_args(cls):
-        return METADATA_SERVICE_URL
-
 
     def version(self):
         return self._version(self._monitor)
